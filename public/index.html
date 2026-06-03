@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Algorithm Study Dashboard — Master DSA Concepts</title>
+  <meta name="description" content="A professional, minimalist interactive study dashboard for mastering algorithm concepts, data structures, and coding patterns." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="index.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Sidebar -->
+    <aside id="sidebar" class="sidebar">
+      <div class="sidebar-header">
+        <div class="logo">
+          <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+            <rect width="28" height="28" rx="7" fill="#18181B"/>
+            <path d="M8 20L14 8L20 20" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M10.5 16H17.5" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          <span class="logo-text">AlgoStudy</span>
+        </div>
+        <button id="sidebar-toggle" class="sidebar-toggle" aria-label="Toggle sidebar">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+            <path d="M3 5H15M3 9H15M3 13H15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="sidebar-search">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.4"/>
+          <path d="M11 11L14 14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        </svg>
+        <input type="text" id="search-input" placeholder="Search topics…" autocomplete="off" />
+      </div>
+
+      <nav id="sidebar-nav" class="sidebar-nav" role="navigation" aria-label="Topics navigation"></nav>
+
+      <div class="sidebar-actions">
+        <button id="sidebar-revision-btn" class="sidebar-action-btn" title="Revision List">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+            <circle cx="13" cy="3" r="2.5" fill="#D97706" stroke="var(--color-surface)" stroke-width="1"/>
+          </svg>
+          <span>Revision List</span>
+        </button>
+        <button id="sidebar-add-topic-btn" class="sidebar-action-btn" title="Add Topic">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+          <span>Add Topic</span>
+        </button>
+      </div>
+
+      <div class="sidebar-footer">
+        <div class="progress-widget">
+          <div class="progress-label">
+            <span>Solved</span>
+            <span id="progress-pct">0 / 0</span>
+          </div>
+          <div class="progress-bar">
+            <div id="progress-fill" class="progress-fill" style="width: 0%"></div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main id="main-content" class="main-content">
+      <!-- Sidebar reopen button (visible only when sidebar collapsed) -->
+      <button id="sidebar-reopen" class="sidebar-reopen" aria-label="Open sidebar">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+          <path d="M3 5H15M3 9H15M3 13H15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </button>
+      <!-- Loading State -->
+      <div id="loading-view" class="view-panel loading-view active">Loading dashboard…</div>
+
+      <!-- Welcome -->
+      <div id="welcome-view" class="view-panel welcome-view">
+        <div class="welcome-inner">
+          <div class="welcome-badge">Algorithm Concepts</div>
+          <h1 class="welcome-title">Master Data Structures<br/>&amp; Algorithms</h1>
+          <p class="welcome-subtitle">A structured, pattern-based approach to solving coding problems. Select a topic from the sidebar to begin.</p>
+          <div class="welcome-stats" id="welcome-stats"></div>
+          <div class="notes-section" id="home-notes-section">
+            <div class="notes-header">
+              <h3><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 2h10a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V3a1 1 0 011-1z" stroke="currentColor" stroke-width="1.3"/><path d="M5 5h6M5 8h6M5 11h3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg> General Notes</h3>
+              <button class="btn btn-ghost btn-sm" id="home-add-note-btn">+ Add Note</button>
+            </div>
+            <div id="home-notes-list" class="notes-list"></div>
+          </div>
+          <div class="welcome-cards" id="welcome-cards"></div>
+        </div>
+      </div>
+
+      <!-- Revision -->
+      <div id="revision-view" class="view-panel revision-view">
+        <div class="content-header">
+          <button id="revision-back-btn" class="back-btn"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8L10 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span>All Topics</span></button>
+        </div>
+        <div class="revision-header">
+          <div class="revision-icon">🔄</div>
+          <div><h1 class="topic-title">Revision List</h1><p class="topic-desc">Questions you've marked for revision.</p></div>
+        </div>
+        <div class="revision-filters">
+          <div class="filter-group" id="revision-filters">
+            <button class="filter-btn active" data-filter="all">All</button>
+            <button class="filter-btn" data-filter="Easy">Easy</button>
+            <button class="filter-btn" data-filter="Medium">Medium</button>
+            <button class="filter-btn" data-filter="Hard">Hard</button>
+          </div>
+        </div>
+        <div id="revision-list" class="revision-list" style="padding: 0 40px 60px;"></div>
+      </div>
+
+      <!-- Topic View -->
+      <div id="topic-view" class="view-panel topic-view">
+        <div class="content-header"><button id="back-btn" class="back-btn"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8L10 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span>All Topics</span></button></div>
+        <div class="topic-header">
+          <div class="topic-icon" id="topic-icon"></div>
+          <div><h1 id="topic-title" class="topic-title"></h1><p id="topic-desc" class="topic-desc"></p></div>
+        </div>
+        <div class="topic-actions">
+          <button id="view-all-questions-btn" class="btn btn-primary"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="2" rx="1" fill="currentColor"/><rect x="2" y="7" width="12" height="2" rx="1" fill="currentColor"/><rect x="2" y="11" width="12" height="2" rx="1" fill="currentColor"/></svg><span>View All Questions</span></button>
+          <button id="add-method-btn" class="btn btn-secondary"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>Add Pattern</span></button>
+          <div class="topic-method-count" id="topic-method-count"></div>
+        </div>
+        <div class="notes-section" id="topic-notes-section" style="padding: 0 40px;">
+          <div class="notes-header">
+            <h3><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 2h10a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V3a1 1 0 011-1z" stroke="currentColor" stroke-width="1.3"/><path d="M5 5h6M5 8h6M5 11h3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg> Topic Notes</h3>
+            <button class="btn btn-ghost btn-sm" id="topic-add-note-btn">+ Add Note</button>
+          </div>
+          <div id="topic-notes-list" class="notes-list"></div>
+        </div>
+        <div id="all-questions-panel" class="all-questions-panel">
+          <div class="all-questions-header">
+            <h2>All Questions</h2>
+            <div class="filter-group" id="difficulty-filters">
+              <button class="filter-btn active" data-filter="all">All</button>
+              <button class="filter-btn" data-filter="Easy">Easy</button>
+              <button class="filter-btn" data-filter="Medium">Medium</button>
+              <button class="filter-btn" data-filter="Hard">Hard</button>
+            </div>
+          </div>
+          <div id="all-questions-list" class="questions-grid"></div>
+        </div>
+        <div id="method-cards" class="method-cards"></div>
+      </div>
+
+      <!-- Method View -->
+      <div id="method-view" class="view-panel method-view">
+        <div class="content-header"><button id="method-back-btn" class="back-btn"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8L10 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span id="method-back-text">Back to Topic</span></button></div>
+        <div class="method-header">
+          <div class="method-badge" id="method-badge"></div>
+          <h1 id="method-title" class="method-title"></h1>
+        </div>
+        <div class="method-explanation" id="method-explanation"></div>
+        <div class="notes-section" id="method-notes-section" style="padding: 0 40px; margin-top: 20px;">
+          <div class="notes-header">
+            <h3><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 2h10a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V3a1 1 0 011-1z" stroke="currentColor" stroke-width="1.3"/><path d="M5 5h6M5 8h6M5 11h3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg> Pattern Notes</h3>
+            <button class="btn btn-ghost btn-sm" id="method-add-note-btn">+ Add Note</button>
+          </div>
+          <div id="method-notes-list" class="notes-list"></div>
+        </div>
+        <div class="method-question-actions">
+          <button id="show-questions-btn" class="btn btn-secondary show-questions-btn"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="2" rx="1" fill="currentColor"/><rect x="2" y="7" width="8" height="2" rx="1" fill="currentColor"/><rect x="2" y="11" width="10" height="2" rx="1" fill="currentColor"/></svg><span>Show Questions</span><svg class="chevron-icon" width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M4 5.5L7 8.5L10 5.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <button id="add-question-btn" class="btn btn-ghost"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>Add Question</span></button>
+        </div>
+        <div id="method-questions" class="method-questions">
+          <div id="method-questions-inner" class="method-questions-inner"></div>
+        </div>
+      </div>
+    </main>
+
+    <!-- AI Fab -->
+    <button id="ai-fab" class="ai-fab" title="AI Assistant"><svg width="22" height="22" viewBox="0 0 22 22" fill="none"><path d="M11 2L3 7v8l8 5 8-5V7l-8-5z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="11" cy="11" r="3" stroke="currentColor" stroke-width="1.5"/></svg></button>
+
+    <!-- AI Panel -->
+    <div id="ai-panel" class="ai-panel">
+      <div class="ai-panel-header">
+        <div class="ai-panel-title"><svg width="18" height="18" viewBox="0 0 22 22" fill="none"><path d="M11 2L3 7v8l8 5 8-5V7l-8-5z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="11" cy="11" r="3" stroke="currentColor" stroke-width="1.5"/></svg><span>AI Assistant</span></div>
+        <div class="ai-panel-actions">
+          <select id="ai-model-select" class="ai-model-select">
+            <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+            <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash</option>
+          </select>
+          <button id="ai-close-btn" class="btn-icon" title="Close"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
+        </div>
+      </div>
+      <div id="ai-messages" class="ai-messages">
+        <div class="ai-welcome-msg">
+          <p><strong>How can I help?</strong></p>
+          <p>I can add new data structures, patterns, and questions. Try:</p>
+          <ul>
+            <li>"Add Backtracking topic with its patterns and questions"</li>
+            <li>"Add Monotonic Stack pattern to Arrays"</li>
+            <li>"Add these questions: 4Sum, Remove Element"</li>
+          </ul>
+        </div>
+      </div>
+      <div class="ai-input-area">
+        <textarea id="ai-input" placeholder="Ask AI to add topics, patterns, or questions…" rows="2"></textarea>
+        <button id="ai-send-btn" class="ai-send-btn" title="Send"><svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M3 9h12M11 5l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      </div>
+    </div>
+
+    <!-- Modal -->
+    <div id="modal-overlay" class="modal-overlay">
+      <div id="modal" class="modal">
+        <div class="modal-header"><h2 id="modal-title"></h2><button id="modal-close" class="btn-icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button></div>
+        <div id="modal-body" class="modal-body"></div>
+        <div id="modal-footer" class="modal-footer"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
