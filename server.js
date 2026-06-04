@@ -68,10 +68,23 @@ async function initDB() {
       created_at INTEGER DEFAULT (unixepoch()),
       updated_at INTEGER DEFAULT (unixepoch())
     )`,
+    `CREATE TABLE IF NOT EXISTS solutions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      question_id INTEGER NOT NULL,
+      approach TEXT NOT NULL DEFAULT 'brute',
+      title TEXT NOT NULL DEFAULT '',
+      explanation TEXT NOT NULL DEFAULT '',
+      code TEXT NOT NULL DEFAULT '',
+      time_complexity TEXT DEFAULT '',
+      space_complexity TEXT DEFAULT '',
+      sort_order INTEGER DEFAULT 0,
+      FOREIGN KEY (question_id) REFERENCES questions(id) ON DELETE CASCADE
+    )`,
     `CREATE INDEX IF NOT EXISTS idx_methods_topic ON methods(topic_id)`,
     `CREATE INDEX IF NOT EXISTS idx_questions_method ON questions(method_id, topic_id)`,
     `CREATE INDEX IF NOT EXISTS idx_questions_revision ON questions(revision) WHERE revision = 1`,
     `CREATE INDEX IF NOT EXISTS idx_notes_scope ON notes(scope)`,
+    `CREATE INDEX IF NOT EXISTS idx_solutions_question ON solutions(question_id)`,
   ]);
   console.log('✓ Database tables initialized');
 }
@@ -350,6 +363,43 @@ app.delete('/api/notes/:id', async (req, res) => {
   try {
     await db.execute({ sql: 'DELETE FROM notes WHERE id = ?', args: [req.params.id] });
     res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Solutions ────────────────────────────────────────────────
+app.get('/api/questions/:id/solutions', async (req, res) => {
+  try {
+    const rows = await db.execute({
+      sql: 'SELECT * FROM solutions WHERE question_id = ? ORDER BY sort_order',
+      args: [req.params.id],
+    });
+    res.json(rows.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/questions/:id/solutions', async (req, res) => {
+  try {
+    const qId = req.params.id;
+    const { approaches } = req.body; // array of { approach, title, explanation, code, time_complexity, space_complexity }
+    if (!approaches || !approaches.length) return res.status(400).json({ error: 'approaches[] required' });
+
+    // Clear existing solutions for this question
+    await db.execute({ sql: 'DELETE FROM solutions WHERE question_id = ?', args: [qId] });
+
+    let added = 0;
+    for (const a of approaches) {
+      await db.execute({
+        sql: `INSERT INTO solutions (question_id, approach, title, explanation, code, time_complexity, space_complexity, sort_order)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [qId, a.approach || 'brute', a.title || '', a.explanation || '', a.code || '', a.time_complexity || '', a.space_complexity || '', added],
+      });
+      added++;
+    }
+    res.json({ success: true, message: `Saved ${added} solution approaches` });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

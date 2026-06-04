@@ -9,6 +9,7 @@
   // ── State ──────────────────────────────────────────────────
   let TOPICS = [];         // full topic tree, loaded once
   let notesCache = {};     // scope → notes[], lazily populated
+  let solutionsCache = {}; // questionDbId → approaches[], lazily populated
 
   const state = {
     currentView: 'loading',
@@ -243,26 +244,29 @@
 
   function renderQuestionItem(q, index, topicId, methodId, opts = {}) {
     return `
-      <div class="question-item ${q.checked ? 'checked' : ''}" data-dbid="${q.dbId}" style="animation-delay:${index * 30}ms">
-        <button class="question-check ${q.checked ? 'active' : ''}" data-dbid="${q.dbId}" title="${q.checked ? 'Uncheck' : 'Mark solved'}">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">${q.checked
-            ? '<rect width="16" height="16" rx="4" fill="#18181B"/><path d="M4.5 8L7 10.5L11.5 5.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>'
-            : '<rect x="0.5" y="0.5" width="15" height="15" rx="3.5" stroke="currentColor" stroke-width="1"/>'}</svg>
-        </button>
-        <span class="question-number">${String(index + 1).padStart(2, '0')}</span>
-        <div class="question-info">
-          <span class="question-title ${q.checked ? 'solved' : ''}">${escapeHtml(q.title)}</span>
-          ${q.remark ? `<span class="question-remark">${escapeHtml(q.remark)}</span>` : ''}
+      <div class="question-item-wrapper" data-dbid="${q.dbId}">
+        <div class="question-item ${q.checked ? 'checked' : ''}" data-dbid="${q.dbId}" style="animation-delay:${index * 30}ms">
+          <button class="question-check ${q.checked ? 'active' : ''}" data-dbid="${q.dbId}" title="${q.checked ? 'Uncheck' : 'Mark solved'}">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">${q.checked
+              ? '<rect width="16" height="16" rx="4" fill="#18181B"/><path d="M4.5 8L7 10.5L11.5 5.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>'
+              : '<rect x="0.5" y="0.5" width="15" height="15" rx="3.5" stroke="currentColor" stroke-width="1"/>'}</svg>
+          </button>
+          <span class="question-number">${String(index + 1).padStart(2, '0')}</span>
+          <div class="question-info">
+            <button class="question-title-btn ${q.checked ? 'solved' : ''}" data-dbid="${q.dbId}" title="View Solutions">${escapeHtml(q.title)}</button>
+            ${q.remark ? `<span class="question-remark">${escapeHtml(q.remark)}</span>` : ''}
+          </div>
+          ${opts.showMethodTag ? `<span class="question-method-tag">${escapeHtml(q.methodName || '')}</span>` : ''}
+          <span class="difficulty-tag ${q.difficulty.toLowerCase()}">${q.difficulty}</span>
+          <button class="question-action-btn revision-btn ${q.revision ? 'active' : ''}" data-dbid="${q.dbId}" title="${q.revision ? 'Unmark revision' : 'Mark for revision'}">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1l1.8 3.6L13 5.3l-3 2.9.7 4.1L7 10.4 3.3 12.3l.7-4.1-3-2.9 4.2-.7L7 1z" stroke="currentColor" stroke-width="1.2" fill="${q.revision ? 'currentColor' : 'none'}" stroke-linejoin="round"/></svg>
+          </button>
+          <button class="question-action-btn note-btn" data-dbid="${q.dbId}" data-title="${escapeHtml(q.title)}" data-topicid="${topicId}" data-methodid="${methodId}" title="Remark / Notes">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 2h10v9l-3-1.5L6 11V2" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+          </button>
+          <a class="question-link" href="${q.link}" target="_blank" rel="noopener noreferrer">Solve <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M4 3H9V8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M9 3L3 9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></a>
         </div>
-        ${opts.showMethodTag ? `<span class="question-method-tag">${escapeHtml(q.methodName || '')}</span>` : ''}
-        <span class="difficulty-tag ${q.difficulty.toLowerCase()}">${q.difficulty}</span>
-        <button class="question-action-btn revision-btn ${q.revision ? 'active' : ''}" data-dbid="${q.dbId}" title="${q.revision ? 'Unmark revision' : 'Mark for revision'}">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1l1.8 3.6L13 5.3l-3 2.9.7 4.1L7 10.4 3.3 12.3l.7-4.1-3-2.9 4.2-.7L7 1z" stroke="currentColor" stroke-width="1.2" fill="${q.revision ? 'currentColor' : 'none'}" stroke-linejoin="round"/></svg>
-        </button>
-        <button class="question-action-btn note-btn" data-dbid="${q.dbId}" data-title="${escapeHtml(q.title)}" data-topicid="${topicId}" data-methodid="${methodId}" title="Remark / Notes">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 2h10v9l-3-1.5L6 11V2" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
-        </button>
-        <a class="question-link" href="${q.link}" target="_blank" rel="noopener noreferrer">Solve <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M4 3H9V8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M9 3L3 9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></a>
+        <div class="solution-panel" id="solution-panel-${q.dbId}" style="display:none;"></div>
       </div>`;
   }
 
@@ -313,6 +317,228 @@
         showQuestionNoteModal(btn.dataset.dbid, scope);
       });
     });
+
+    // Title click → toggle solution panel
+    container.querySelectorAll('.question-title-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const dbId = btn.dataset.dbid;
+        const panel = document.getElementById(`solution-panel-${dbId}`);
+        if (!panel) return;
+
+        if (panel.style.display !== 'none') {
+          panel.style.display = 'none';
+          btn.classList.remove('expanded');
+          return;
+        }
+
+        // Collapse any other open panels in this container
+        container.querySelectorAll('.solution-panel').forEach(p => { p.style.display = 'none'; });
+        container.querySelectorAll('.question-title-btn').forEach(b => b.classList.remove('expanded'));
+
+        btn.classList.add('expanded');
+        panel.style.display = 'block';
+        loadSolutionPanel(dbId, panel);
+      });
+    });
+  }
+
+  // ── Solution Panel ─────────────────────────────────────────
+
+  async function loadSolutionPanel(dbId, panel) {
+    // Show loading
+    panel.innerHTML = '<div class="solution-loading"><div class="spinner-sm"></div><span>Loading solutions…</span></div>';
+
+    // Fetch or use cache
+    let approaches = solutionsCache[dbId];
+    if (!approaches) {
+      try {
+        approaches = await api('GET', `/questions/${dbId}/solutions`);
+        solutionsCache[dbId] = approaches;
+      } catch {
+        approaches = [];
+      }
+    }
+
+    if (!approaches.length) {
+      panel.innerHTML = `
+        <div class="solution-empty">
+          <p>No solutions added yet.</p>
+          <div style="max-width:400px; margin: 16px auto 0;">
+            <input type="text" id="sol-instruct-${dbId}" class="modal-textarea" style="margin-bottom:8px;font-size:13px;padding:8px" placeholder="Optional: Custom instructions for AI (e.g. 'Use Python' or 'Explain like I am 5')">
+            <button class="btn btn-secondary btn-sm solution-generate-btn" data-dbid="${dbId}">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+              Generate with AI
+            </button>
+          </div>
+        </div>`;
+      panel.querySelector('.solution-generate-btn')?.addEventListener('click', () => generateSolutions(dbId, panel));
+      return;
+    }
+
+    renderSolutionApproaches(approaches, panel, dbId);
+  }
+
+  function renderSolutionApproaches(approaches, panel, dbId) {
+    const approachLabels = { brute: 'Brute Force', better: 'Better', optimal: 'Optimal' };
+    const approachIcons = { brute: '🔨', better: '⚡', optimal: '🎯' };
+    const approachColors = { brute: '#EF4444', better: '#F59E0B', optimal: '#10B981' };
+
+    let html = `
+      <div class="solution-approaches">
+        ${approaches.map((a, i) => `
+          <div class="approach-card" data-approach="${a.approach}">
+            <button class="approach-header" data-index="${i}">
+              <div class="approach-header-left">
+                <span class="approach-icon">${approachIcons[a.approach] || '📌'}</span>
+                <span class="approach-label" style="--approach-color: ${approachColors[a.approach] || '#6B7280'}">${a.title || approachLabels[a.approach] || a.approach}</span>
+              </div>
+              <div class="approach-header-right">
+                ${a.time_complexity ? `<span class="complexity-pill" title="Time Complexity">⏱ ${escapeHtml(a.time_complexity)}</span>` : ''}
+                ${a.space_complexity ? `<span class="complexity-pill" title="Space Complexity">💾 ${escapeHtml(a.space_complexity)}</span>` : ''}
+                <svg class="approach-chevron" width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M4 5.5L7 8.5L10 5.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </div>
+            </button>
+            <div class="approach-body" style="display:none;">
+              <div class="approach-explanation">${a.explanation}</div>
+              ${a.code ? `
+                <div class="approach-code-section">
+                  <button class="approach-code-toggle">
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M4.5 3.5L1.5 7l3 3.5M9.5 3.5l3 3.5-3 3.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    <span>View Code</span>
+                    <svg class="code-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
+                  <div class="approach-code-block" style="display:none;">
+                    <div class="code-header">
+                      <span>Code</span>
+                      <button class="code-copy-btn" title="Copy code">
+                        <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><rect x="4" y="4" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2"/><path d="M10 4V2.5A1.5 1.5 0 008.5 1H2.5A1.5 1.5 0 001 2.5v6A1.5 1.5 0 002.5 10H4" stroke="currentColor" stroke-width="1.2"/></svg>
+                      </button>
+                    </div>
+                    <pre><code>${escapeHtml(a.code)}</code></pre>
+                  </div>
+                </div>
+              ` : ''}
+            </div>
+          </div>
+        `).join('')}
+      </div>
+      <div class="solution-actions" style="margin-top:16px; display:flex; gap:8px; align-items:center; border-top:1px solid var(--color-border); padding-top:16px;">
+        <input type="text" id="sol-instruct-${dbId}" class="modal-textarea" style="flex:1; font-size:13px; padding:8px 12px; margin:0; height:36px" placeholder="Custom AI instructions (e.g. 'Use Python' or 'Explain like I am 5')">
+        <button class="btn btn-secondary btn-sm solution-regen-btn" style="height:36px; white-space:nowrap;">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1 4v4h4M13 10V6H9M13 6A6 6 0 114.5 1.8M1 10a6 6 0 008.5 4.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Regenerate
+        </button>
+      </div>
+    `;
+    panel.innerHTML = html;
+
+    // Bind approach accordion
+    panel.querySelectorAll('.approach-header').forEach(hdr => {
+      hdr.addEventListener('click', () => {
+        const card = hdr.closest('.approach-card');
+        const body = card.querySelector('.approach-body');
+        const isOpen = body.style.display !== 'none';
+        body.style.display = isOpen ? 'none' : 'block';
+        card.classList.toggle('open', !isOpen);
+      });
+    });
+
+    // Bind code toggles
+    panel.querySelectorAll('.approach-code-toggle').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const block = btn.nextElementSibling;
+        const isOpen = block.style.display !== 'none';
+        block.style.display = isOpen ? 'none' : 'block';
+        btn.classList.toggle('open', !isOpen);
+      });
+    });
+
+    // Bind copy buttons
+    panel.querySelectorAll('.code-copy-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const code = btn.closest('.approach-code-block').querySelector('code').textContent;
+        navigator.clipboard.writeText(code).then(() => showToast('Code copied!', 'success'));
+      });
+    });
+
+    // Bind regenerate
+    panel.querySelector('.solution-regen-btn')?.addEventListener('click', () => generateSolutions(dbId, panel));
+
+    // Auto-expand first approach
+    const firstHeader = panel.querySelector('.approach-header');
+    if (firstHeader) firstHeader.click();
+  }
+
+  async function generateSolutions(dbId, panel) {
+    const found = findQuestionByDbId(dbId);
+    if (!found) return;
+    const q = found.question;
+
+    // Grab custom instruction before replacing HTML
+    const instructInput = document.getElementById(`sol-instruct-${dbId}`);
+    const customInstruction = instructInput ? instructInput.value.trim() : '';
+
+    panel.innerHTML = '<div class="solution-loading"><div class="spinner-sm"></div><span>Generating solutions with AI… This may take a moment.</span></div>';
+
+    let prompt = `Generate solutions for the LeetCode problem "${q.title}" (${q.difficulty}).
+CRITICAL REQUIREMENTS:
+1. Provide ALL applicable approaches in this order: brute force, then better, then optimal. If an approach doesn't exist, omit it, but you MUST provide optimal.
+2. You MUST include time_complexity and space_complexity for EVERY approach (e.g. "O(N)", "O(1)"). Do not leave them empty.
+3. For each approach provide: approach type ("brute", "better", or "optimal"), a short title, a clear explanation with algorithm steps, and code.`;
+
+    if (customInstruction) {
+      prompt += `\nUSER INSTRUCTION: ${customInstruction}`;
+    } else {
+      prompt += `\nCode should be in C++.`;
+    }
+
+    prompt += `\nRespond with JSON only:
+{
+  "approaches": [
+    {
+      "approach": "brute|better|optimal",
+      "title": "Short title of approach",
+      "explanation": "<div class='solution-text'><h4>Intuition</h4><p>...</p><h4>Algorithm</h4><ol><li>...</li></ol></div>",
+      "code": "Code here",
+      "time_complexity": "O(...)",
+      "space_complexity": "O(...)"
+    }
+  ]
+}`;
+
+    const models = ['gemini-3.5-flash', 'gemini-2.5-flash'];
+
+    for (const model of models) {
+      try {
+        panel.innerHTML = `<div class="solution-loading"><div class="spinner-sm"></div><span>Generating with ${model}…</span></div>`;
+
+        const res = await api('POST', '/ai/chat', {
+          message: prompt,
+          context: { view: 'generate_solutions' },
+          model,
+        });
+
+        if (res.parsed?.approaches) {
+          await api('POST', `/questions/${dbId}/solutions`, { approaches: res.parsed.approaches });
+          solutionsCache[dbId] = res.parsed.approaches;
+          renderSolutionApproaches(res.parsed.approaches, panel, dbId);
+          showToast(`Solutions generated with ${model}!`, 'success');
+          return;
+        }
+      } catch (err) {
+        console.warn(`${model} failed:`, err.message);
+        if (model === models[models.length - 1]) {
+          // Last model also failed
+          panel.innerHTML = `<div class="solution-empty"><p>Error: ${escapeHtml(err.message)}</p>
+          <button class="btn btn-secondary btn-sm mt-2" onclick="loadSolutionPanel('${dbId}', document.getElementById('solution-panel-${dbId}'))">Try Again</button></div>`;
+          return;
+        }
+      }
+    }
+
+    panel.innerHTML = `<div class="solution-empty"><p>Could not generate solutions. Please try again.</p>
+    <button class="btn btn-secondary btn-sm mt-2" onclick="loadSolutionPanel('${dbId}', document.getElementById('solution-panel-${dbId}'))">Try Again</button></div>`;
   }
 
   function renderMethodQuestions() {
