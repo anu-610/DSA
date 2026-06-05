@@ -7,15 +7,23 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
+const cookieParser = require('cookie-parser');
 const { createClient } = require('@libsql/client');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ── Middleware ────────────────────────────────────────────────
-app.use(cors());
+app.use(cors({ credentials: true }));
 app.use(express.json({ limit: '5mb' }));
+app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// ── In-Memory Session Cache (fast auth, zero DB query per request) ──
+// Map<token, { userId, username }>
+const sessionCache = new Map();
 
 // ── Turso DB Client ──────────────────────────────────────────
 const db = createClient({
@@ -80,11 +88,24 @@ async function initDB() {
       sort_order INTEGER DEFAULT 0,
       FOREIGN KEY (question_id) REFERENCES questions(id) ON DELETE CASCADE
     )`,
+    `CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      password_hash TEXT NOT NULL,
+      created_at INTEGER DEFAULT (unixepoch())
+    )`,
+    `CREATE TABLE IF NOT EXISTS sessions (
+      token TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      created_at INTEGER DEFAULT (unixepoch()),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )`,
     `CREATE INDEX IF NOT EXISTS idx_methods_topic ON methods(topic_id)`,
     `CREATE INDEX IF NOT EXISTS idx_questions_method ON questions(method_id, topic_id)`,
     `CREATE INDEX IF NOT EXISTS idx_questions_revision ON questions(revision) WHERE revision = 1`,
     `CREATE INDEX IF NOT EXISTS idx_notes_scope ON notes(scope)`,
     `CREATE INDEX IF NOT EXISTS idx_solutions_question ON solutions(question_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)`,
   ]);
   console.log('✓ Database tables initialized');
 }
@@ -137,6 +158,154 @@ async function seedIfEmpty() {
   await db.batch(statements, 'write');
   console.log(`✓ Database seeded: ${statements.length} records`);
 }
+
+// ════════════════════════════════════════════════════════════
+//  AUTH — Session Warm-Up & Routes
+// ════════════════════════════════════════════════════════════
+
+/** Load all existing sessions into memory on server start */
+async function warmSessionCache() {
+  try {
+    const rows = await db.execute(`
+      SELECT s.token, s.user_id, u.username
+      FROM sessions s JOIN users u ON u.id = s.user_id
+    `);
+    for (const r of rows.rows) {
+      sessionCache.set(r.token, { userId: r.user_id, username: r.username });
+    }
+    console.log(`✓ Session cache warmed (${sessionCache.size} sessions)`);
+  } catch (err) {
+    console.warn('Session cache warm-up failed:', err.message);
+  }
+}
+
+/**
+ * Auth middleware — in-memory cache first, DB fallback.
+ * Vercel serverless can spin up fresh instances (empty cache),
+ * so we fall back to DB on a miss and repopulate the cache.
+ * Subsequent requests on the same instance are pure in-memory (fast).
+ */
+async function requireAuth(req, res, next) {
+  const token = req.cookies?.session;
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  // Fast path: in-memory hit
+  if (sessionCache.has(token)) {
+    req.user = sessionCache.get(token);
+    return next();
+  }
+
+  // Slow path: DB lookup (cold instance / Vercel serverless fresh start)
+  try {
+    const rows = await db.execute({
+      sql: `SELECT s.user_id, u.username FROM sessions s
+            JOIN users u ON u.id = s.user_id WHERE s.token = ?`,
+      args: [token],
+    });
+    const row = rows.rows[0];
+    if (!row) return res.status(401).json({ error: 'Unauthorized' });
+
+    // Repopulate cache for this instance
+    const user = { userId: Number(row.user_id), username: row.username };
+    sessionCache.set(token, user);
+    req.user = user;
+    return next();
+  } catch (err) {
+    return res.status(500).json({ error: 'Auth check failed' });
+  }
+}
+
+// ── POST /api/auth/register ───────────────────────────────────
+// Creates the first user. Disabled once a user already exists.
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) return res.status(400).json({ error: 'username and password required' });
+
+    // Only allow registration if no users exist yet
+    const cnt = await db.execute('SELECT COUNT(*) as c FROM users');
+    if (cnt.rows[0].c > 0) return res.status(403).json({ error: 'Registration is closed' });
+
+    const hash = await bcrypt.hash(password, 12);
+    const result = await db.execute({
+      sql: 'INSERT INTO users (username, password_hash) VALUES (?, ?)',
+      args: [username.trim(), hash],
+    });
+
+    // Auto-login after register
+    const token = crypto.randomBytes(48).toString('hex');
+    await db.execute({
+      sql: 'INSERT INTO sessions (token, user_id) VALUES (?, ?)',
+      args: [token, result.lastInsertRowid],
+    });
+    sessionCache.set(token, { userId: Number(result.lastInsertRowid), username: username.trim() });
+
+    res.cookie('session', token, {
+      httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production',
+      maxAge: 10 * 365 * 24 * 60 * 60 * 1000, // 10 years
+    });
+    res.json({ success: true, username: username.trim() });
+  } catch (err) {
+    if (err.message?.includes('UNIQUE')) return res.status(409).json({ error: 'Username already taken' });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/auth/login ──────────────────────────────────────
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) return res.status(400).json({ error: 'username and password required' });
+
+    const rows = await db.execute({
+      sql: 'SELECT * FROM users WHERE username = ? COLLATE NOCASE',
+      args: [username.trim()],
+    });
+    const user = rows.rows[0];
+    if (!user) return res.status(401).json({ error: 'Invalid username or password' });
+
+    const valid = await bcrypt.compare(password, user.password_hash);
+    if (!valid) return res.status(401).json({ error: 'Invalid username or password' });
+
+    const token = crypto.randomBytes(48).toString('hex');
+    await db.execute({
+      sql: 'INSERT INTO sessions (token, user_id) VALUES (?, ?)',
+      args: [token, user.id],
+    });
+    sessionCache.set(token, { userId: Number(user.id), username: user.username });
+
+    res.cookie('session', token, {
+      httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production',
+      maxAge: 10 * 365 * 24 * 60 * 60 * 1000, // 10 years — effectively never expires
+    });
+    res.json({ success: true, username: user.username });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/auth/logout ─────────────────────────────────────
+app.post('/api/auth/logout', (req, res) => {
+  const token = req.cookies?.session;
+  if (token) {
+    sessionCache.delete(token);
+    db.execute({ sql: 'DELETE FROM sessions WHERE token = ?', args: [token] }).catch(() => { });
+  }
+  res.clearCookie('session');
+  res.json({ success: true });
+});
+
+// ── GET /api/auth/me ──────────────────────────────────────────
+app.get('/api/auth/me', (req, res) => {
+  const token = req.cookies?.session;
+  if (token && sessionCache.has(token)) {
+    return res.json({ loggedIn: true, username: sessionCache.get(token).username });
+  }
+  res.json({ loggedIn: false });
+});
+
+// ── Protect all other /api routes ────────────────────────────
+app.use('/api', requireAuth);
 
 // ════════════════════════════════════════════════════════════
 //  API ROUTES
@@ -706,13 +875,38 @@ app.get('/api/stats', async (req, res) => {
   }
 });
 
-// ── Fallback to SPA ──────────────────────────────────────────
-app.use((req, res, next) => {
-  if (req.method === 'GET' && !req.path.startsWith('/api/')) {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-  } else {
-    next();
+// ── Fallback to SPA (auth-gated) ─────────────────────────────
+app.use(async (req, res, next) => {
+  if (req.method !== 'GET' || req.path.startsWith('/api/')) return next();
+
+  // Public pages — always accessible
+  if (req.path === '/login.html' || req.path === '/login') {
+    return res.sendFile(path.join(__dirname, 'public', 'login.html'));
   }
+
+  // All other GET pages require auth — check cache first, then DB
+  const token = req.cookies?.session;
+  if (!token) return res.redirect('/login.html');
+
+  if (sessionCache.has(token)) {
+    return res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  }
+
+  // Cache miss — check DB (handles Vercel cold starts)
+  try {
+    const rows = await db.execute({
+      sql: `SELECT s.user_id, u.username FROM sessions s
+            JOIN users u ON u.id = s.user_id WHERE s.token = ?`,
+      args: [token],
+    });
+    const row = rows.rows[0];
+    if (row) {
+      sessionCache.set(token, { userId: Number(row.user_id), username: row.username });
+      return res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    }
+  } catch { /* fall through */ }
+
+  res.redirect('/login.html');
 });
 
 // ── Start ────────────────────────────────────────────────────
@@ -720,6 +914,7 @@ async function start() {
   try {
     await initDB();
     await seedIfEmpty();
+    await warmSessionCache();
     app.listen(PORT, () => {
       console.log(`\n🚀 AlgoStudy Dashboard running at http://localhost:${PORT}\n`);
     });
@@ -733,8 +928,8 @@ async function start() {
 if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
   start();
 } else {
-  // Run migrations in background on cold start for Vercel
-  initDB().then(seedIfEmpty).catch(console.error);
+  // Run migrations + warm cache on cold start for Vercel
+  initDB().then(seedIfEmpty).then(warmSessionCache).catch(console.error);
 }
 
 module.exports = app;

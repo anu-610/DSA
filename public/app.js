@@ -31,9 +31,10 @@
   // ── API (fire-and-forget for mutations) ────────────────────
 
   async function api(method, path, body) {
-    const opts = { method, headers: { 'Content-Type': 'application/json' } };
+    const opts = { method, headers: { 'Content-Type': 'application/json' }, credentials: 'include' };
     if (body) opts.body = JSON.stringify(body);
     const res = await fetch(`/api${path}`, opts);
+    if (res.status === 401) { window.location.href = '/login.html'; return; }
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || `API error ${res.status}`);
     return data;
@@ -209,17 +210,19 @@
     const method = findMethod(topicId, methodId);
     if (!topic || !method) return;
     state.activeTopic = topicId; state.activeMethod = methodId;
-    state.questionsVisible = false; state.expandedTopics.add(topicId);
+    state.expandedTopics.add(topicId);
 
     $('#method-badge').textContent = topic.name;
     $('#method-title').textContent = method.name;
     $('#method-explanation').innerHTML = method.explanation;
     $('#method-back-text').textContent = `Back to ${topic.name}`;
-    $('#method-questions').classList.remove('visible');
-    $('#show-questions-btn').classList.remove('expanded');
-    $('#show-questions-btn span').textContent = 'Show Questions';
     renderNotes(`method:${topicId}:${methodId}`, 'method-notes-list', 'method-add-note-btn');
     setView('method'); renderSidebar();
+    // Auto-render questions immediately in the right panel
+    renderMethodQuestions();
+    const qCount = method.questions?.length || 0;
+    const countEl = $('#questions-panel-count');
+    if (countEl) countEl.textContent = qCount || '';
   }
 
   function navigateToRevision() {
@@ -248,8 +251,8 @@
         <div class="question-item ${q.checked ? 'checked' : ''}" data-dbid="${q.dbId}" style="animation-delay:${index * 30}ms">
           <button class="question-check ${q.checked ? 'active' : ''}" data-dbid="${q.dbId}" title="${q.checked ? 'Uncheck' : 'Mark solved'}">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">${q.checked
-              ? '<rect width="16" height="16" rx="4" fill="#18181B"/><path d="M4.5 8L7 10.5L11.5 5.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>'
-              : '<rect x="0.5" y="0.5" width="15" height="15" rx="3.5" stroke="currentColor" stroke-width="1"/>'}</svg>
+        ? '<rect width="16" height="16" rx="4" fill="#18181B"/><path d="M4.5 8L7 10.5L11.5 5.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>'
+        : '<rect x="0.5" y="0.5" width="15" height="15" rx="3.5" stroke="currentColor" stroke-width="1"/>'}</svg>
           </button>
           <span class="question-number">${String(index + 1).padStart(2, '0')}</span>
           <div class="question-info">
@@ -549,11 +552,68 @@ CRITICAL REQUIREMENTS:
     let html = '', idx = 0;
     ['Easy', 'Medium', 'Hard'].forEach(d => {
       if (!grouped[d].length) return;
-      html += `<div class="difficulty-section"><div class="difficulty-section-header"><span class="difficulty-dot ${d.toLowerCase()}"></span>${d} (${grouped[d].length})</div><div class="questions-grid">${grouped[d].map(q => renderQuestionItem(q, idx++, state.activeTopic, state.activeMethod)).join('')}</div></div>`;
+      html += `<div class="difficulty-section"><div class="difficulty-section-header"><span class="difficulty-dot ${d.toLowerCase()}"></span>${d} (<span class="difficulty-count" data-difficulty="${d}">${grouped[d].length}</span>)</div><div class="questions-grid sortable-list" data-difficulty="${d}">${grouped[d].map(q => renderQuestionItem(q, idx++, state.activeTopic, state.activeMethod)).join('')}</div></div>`;
     });
     const inner = $('#method-questions-inner');
     inner.innerHTML = html;
     attachQuestionListeners(inner);
+
+    // Initialize SortableJS for drag-and-drop
+    if (typeof Sortable !== 'undefined') {
+      $$('.sortable-list', inner).forEach(el => {
+        new Sortable(el, {
+          group: 'questions', // set both lists to same group
+          animation: 150,
+          ghostClass: 'sortable-ghost',
+          dragClass: 'sortable-drag',
+          onEnd: handleQuestionDrop
+        });
+      });
+    }
+  }
+
+  async function handleQuestionDrop(evt) {
+    const itemEl = evt.item;  // dragged HTMLElement
+    const toEl = evt.to;      // target list
+    const fromEl = evt.from;  // previous list
+
+    const newDifficulty = toEl.dataset.difficulty;
+    const oldDifficulty = fromEl.dataset.difficulty;
+
+    // Collect all items in the new list to update their sort_order
+    const itemsInNewList = Array.from(toEl.children);
+    const updates = itemsInNewList.map((el, idx) => ({
+      id: Number(el.dataset.dbid),
+      difficulty: newDifficulty,
+      sort_order: idx
+    }));
+
+    // If it moved between lists, we also need to update sort_order of the old list
+    if (newDifficulty !== oldDifficulty) {
+      const itemsInOldList = Array.from(fromEl.children);
+      itemsInOldList.forEach((el, idx) => {
+        updates.push({
+          id: Number(el.dataset.dbid),
+          difficulty: oldDifficulty,
+          sort_order: idx
+        });
+      });
+
+      // Update counts in DOM
+      $(`.difficulty-count[data-difficulty="${newDifficulty}"]`).textContent = itemsInNewList.length;
+      $(`.difficulty-count[data-difficulty="${oldDifficulty}"]`).textContent = itemsInOldList.length;
+    }
+
+    try {
+      await api('PUT', '/questions/reorder', { updates });
+      // Reload topics to get the new order/categories in memory
+      TOPICS = await api('GET', '/topics');
+    } catch (err) {
+      showToast('Error saving question order', 'error');
+      // On error, a full reload might be safer to restore state
+      TOPICS = await api('GET', '/topics');
+      renderMethodQuestions();
+    }
   }
 
   function renderAllQuestions() {
@@ -653,7 +713,7 @@ CRITICAL REQUIREMENTS:
       <label class="modal-label">Add a remark (optional)</label>
       <textarea id="remark-input" class="modal-textarea" placeholder="e.g., Used two-pass approach…" rows="3"></textarea>
     `, `<button class="btn btn-ghost" data-action="skip">Skip</button><button class="btn btn-primary" data-action="submit">Mark Solved</button>`,
-    () => { onDone($('#remark-input').value.trim()); });
+      () => { onDone($('#remark-input').value.trim()); });
     setTimeout(() => {
       const skip = $('#modal').querySelector('[data-action="skip"]');
       if (skip) skip.onclick = () => { $('#modal-overlay').classList.remove('visible'); onDone(''); };
@@ -792,31 +852,31 @@ CRITICAL REQUIREMENTS:
 
   function showAddNoteModal(scope, listId, addBtnId) {
     showModal('Add Note', `<textarea id="new-note-text" class="modal-textarea" placeholder="Write your note…" rows="4"></textarea>`,
-    `<button class="btn btn-primary" data-action="submit">Add Note</button>`,
-    () => {
-      const t = $('#new-note-text').value.trim();
-      if (t) {
-        const newNote = { id: Date.now(), text: t, created_at: Math.floor(Date.now() / 1000) };
-        notesCache[scope] = [newNote, ...(notesCache[scope] || [])];
-        fireAPI('POST', '/notes', { scope, text: t });
-        renderNotes(scope, listId, addBtnId);
-      }
-    });
+      `<button class="btn btn-primary" data-action="submit">Add Note</button>`,
+      () => {
+        const t = $('#new-note-text').value.trim();
+        if (t) {
+          const newNote = { id: Date.now(), text: t, created_at: Math.floor(Date.now() / 1000) };
+          notesCache[scope] = [newNote, ...(notesCache[scope] || [])];
+          fireAPI('POST', '/notes', { scope, text: t });
+          renderNotes(scope, listId, addBtnId);
+        }
+      });
   }
 
   function showEditNoteModal(scope, noteId, currentText, listId, addBtnId) {
     showModal('Edit Note', `<textarea id="edit-note-text" class="modal-textarea" rows="4">${escapeHtml(currentText)}</textarea>`,
-    `<button class="btn btn-primary" data-action="submit">Save</button>`,
-    () => {
-      const t = $('#edit-note-text').value.trim();
-      if (t) {
-        // Optimistic update cache
-        const cached = notesCache[scope];
-        if (cached) { const n = cached.find(x => x.id == noteId); if (n) n.text = t; }
-        fireAPI('PATCH', `/notes/${noteId}`, { text: t });
-        renderNotes(scope, listId, addBtnId);
-      }
-    });
+      `<button class="btn btn-primary" data-action="submit">Save</button>`,
+      () => {
+        const t = $('#edit-note-text').value.trim();
+        if (t) {
+          // Optimistic update cache
+          const cached = notesCache[scope];
+          if (cached) { const n = cached.find(x => x.id == noteId); if (n) n.text = t; }
+          fireAPI('PATCH', `/notes/${noteId}`, { text: t });
+          renderNotes(scope, listId, addBtnId);
+        }
+      });
   }
 
   // ── Add Topic / Method / Question Modals ───────────────────
@@ -827,17 +887,17 @@ CRITICAL REQUIREMENTS:
       <label class="modal-label">Icon (emoji)</label><input type="text" id="new-topic-icon" class="modal-input" placeholder="e.g., 🔙" maxlength="4" />
       <label class="modal-label">Description</label><textarea id="new-topic-desc" class="modal-textarea" placeholder="Brief description…" rows="2"></textarea>
     `, `<button class="btn btn-primary" data-action="submit">Add Topic</button>`,
-    async () => {
-      const name = $('#new-topic-name').value.trim();
-      if (!name) return;
-      const id = slugify(name);
-      const icon = $('#new-topic-icon').value.trim() || '📁';
-      const desc = $('#new-topic-desc').value.trim();
-      // Optimistic: add to memory
-      TOPICS.push({ id, name, icon, description: desc, methods: [] });
-      fireAPI('POST', '/topics', { id, name, icon, description: desc });
-      renderSidebar(); renderWelcome(); navigateToTopic(id);
-    });
+      async () => {
+        const name = $('#new-topic-name').value.trim();
+        if (!name) return;
+        const id = slugify(name);
+        const icon = $('#new-topic-icon').value.trim() || '📁';
+        const desc = $('#new-topic-desc').value.trim();
+        // Optimistic: add to memory
+        TOPICS.push({ id, name, icon, description: desc, methods: [] });
+        fireAPI('POST', '/topics', { id, name, icon, description: desc });
+        renderSidebar(); renderWelcome(); navigateToTopic(id);
+      });
   }
 
   function showAddMethodModal() {
@@ -847,17 +907,17 @@ CRITICAL REQUIREMENTS:
       <label class="modal-label">Pattern Name</label><input type="text" id="new-method-name" class="modal-input" placeholder="e.g., Monotonic Stack" />
       <label class="modal-label">Explanation (HTML or plain text)</label><textarea id="new-method-expl" class="modal-textarea" placeholder="Describe the pattern…" rows="6"></textarea>
     `, `<button class="btn btn-primary" data-action="submit">Add Pattern</button>`,
-    async () => {
-      const name = $('#new-method-name').value.trim();
-      if (!name) return;
-      let expl = $('#new-method-expl').value.trim();
-      if (expl && !expl.includes('<')) expl = `<div class="explanation-section"><p>${expl}</p></div>`;
-      const id = slugify(name);
-      // Optimistic
-      topic.methods.push({ id, name, explanation: expl || '', questions: [] });
-      fireAPI('POST', '/methods', { id, topicId: state.activeTopic, name, explanation: expl || '' });
-      navigateToTopic(state.activeTopic);
-    });
+      async () => {
+        const name = $('#new-method-name').value.trim();
+        if (!name) return;
+        let expl = $('#new-method-expl').value.trim();
+        if (expl && !expl.includes('<')) expl = `<div class="explanation-section"><p>${expl}</p></div>`;
+        const id = slugify(name);
+        // Optimistic
+        topic.methods.push({ id, name, explanation: expl || '', questions: [] });
+        fireAPI('POST', '/methods', { id, topicId: state.activeTopic, name, explanation: expl || '' });
+        navigateToTopic(state.activeTopic);
+      });
   }
 
   function showAddQuestionModal() {
@@ -871,26 +931,26 @@ CRITICAL REQUIREMENTS:
       <p class="modal-hint">Or add multiple (one per line):</p>
       <textarea id="new-q-bulk" class="modal-textarea" placeholder="Question 1&#10;Question 2" rows="4"></textarea>
     `, `<button class="btn btn-primary" data-action="submit">Add</button>`,
-    async () => {
-      const title = $('#new-q-title').value.trim();
-      const link = $('#new-q-link').value.trim();
-      const diff = $('#new-q-diff').value;
-      const bulk = $('#new-q-bulk').value.trim();
-      const qs = [];
-      if (title) qs.push({ title, link: link || `https://leetcode.com/problems/${slugify(title)}/`, difficulty: diff });
-      if (bulk) bulk.split('\n').forEach(l => { const t = l.trim(); if (t && t !== title) qs.push({ title: t, link: `https://leetcode.com/problems/${slugify(t)}/`, difficulty: diff }); });
-      if (qs.length) {
-        // Optimistic: add to memory with temp dbIds
-        qs.forEach(q => method.questions.push({ dbId: 'tmp-' + Date.now() + Math.random(), title: q.title, link: q.link, difficulty: q.difficulty, checked: false, remark: '', revision: false }));
-        // Fire API, then reload to get real dbIds
-        api('POST', '/questions', { topicId: state.activeTopic, methodId: state.activeMethod, questions: qs })
-          .then(() => api('GET', '/topics'))
-          .then(data => { TOPICS = data; refreshCurrentView(); renderSidebar(); })
-          .catch(err => showToast(err.message, 'error'));
-        if (state.questionsVisible) renderMethodQuestions();
-        renderSidebar();
-      }
-    });
+      async () => {
+        const title = $('#new-q-title').value.trim();
+        const link = $('#new-q-link').value.trim();
+        const diff = $('#new-q-diff').value;
+        const bulk = $('#new-q-bulk').value.trim();
+        const qs = [];
+        if (title) qs.push({ title, link: link || `https://leetcode.com/problems/${slugify(title)}/`, difficulty: diff });
+        if (bulk) bulk.split('\n').forEach(l => { const t = l.trim(); if (t && t !== title) qs.push({ title: t, link: `https://leetcode.com/problems/${slugify(t)}/`, difficulty: diff }); });
+        if (qs.length) {
+          // Optimistic: add to memory with temp dbIds
+          qs.forEach(q => method.questions.push({ dbId: 'tmp-' + Date.now() + Math.random(), title: q.title, link: q.link, difficulty: q.difficulty, checked: false, remark: '', revision: false }));
+          // Fire API, then reload to get real dbIds
+          api('POST', '/questions', { topicId: state.activeTopic, methodId: state.activeMethod, questions: qs })
+            .then(() => api('GET', '/topics'))
+            .then(data => { TOPICS = data; refreshCurrentView(); renderSidebar(); })
+            .catch(err => showToast(err.message, 'error'));
+          if (state.questionsVisible) renderMethodQuestions();
+          renderSidebar();
+        }
+      });
   }
 
   // ── Refresh (all from memory) ──────────────────────────────
@@ -1017,11 +1077,7 @@ CRITICAL REQUIREMENTS:
     renderRevisionList();
   }));
 
-  $('#show-questions-btn').addEventListener('click', () => {
-    state.questionsVisible = !state.questionsVisible;
-    if (state.questionsVisible) { renderMethodQuestions(); $('#method-questions').classList.add('visible'); $('#show-questions-btn').classList.add('expanded'); $('#show-questions-btn span').textContent = 'Hide Questions'; }
-    else { $('#method-questions').classList.remove('visible'); $('#show-questions-btn').classList.remove('expanded'); $('#show-questions-btn span').textContent = 'Show Questions'; }
-  });
+  // Questions are now always visible in the right panel — no toggle needed
 
   $('#sidebar-add-topic-btn').addEventListener('click', showAddTopicModal);
   $('#sidebar-revision-btn').addEventListener('click', navigateToRevision);
@@ -1037,6 +1093,60 @@ CRITICAL REQUIREMENTS:
     }
   });
 
+  // ── Resizer ────────────────────────────────────────────────
+  function initResizer() {
+    const resizer = $('#method-resizer');
+    const layout = $('.method-view-layout');
+    if (!resizer || !layout) return;
+
+    let isDragging = false;
+
+    // Load saved width
+    const savedWidth = localStorage.getItem('algo_right_panel_width');
+    if (savedWidth) {
+      layout.style.setProperty('--right-panel-width', `${savedWidth}px`);
+    }
+
+    resizer.addEventListener('mousedown', (e) => {
+      isDragging = true;
+      resizer.classList.add('dragging');
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none'; // Prevent text selection
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      
+      // Calculate new width: window width - mouse X
+      // (because the panel is on the right)
+      let newWidth = window.innerWidth - e.clientX;
+      
+      // Constrain width (min 250px, max 600px or half window)
+      const minWidth = 250;
+      const maxWidth = Math.min(600, window.innerWidth / 2);
+      
+      if (newWidth < minWidth) newWidth = minWidth;
+      if (newWidth > maxWidth) newWidth = maxWidth;
+
+      layout.style.setProperty('--right-panel-width', `${newWidth}px`);
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (isDragging) {
+        isDragging = false;
+        resizer.classList.remove('dragging');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        
+        // Save to localStorage
+        const finalWidth = layout.style.getPropertyValue('--right-panel-width').replace('px', '');
+        if (finalWidth) {
+          localStorage.setItem('algo_right_panel_width', finalWidth);
+        }
+      }
+    });
+  }
+
   // ── Init ───────────────────────────────────────────────────
 
   async function init() {
@@ -1047,6 +1157,7 @@ CRITICAL REQUIREMENTS:
       renderWelcome();
       updateProgress();
       initAI();
+      initResizer();
       setView('welcome');
     } catch (err) {
       console.error('Init error:', err);
