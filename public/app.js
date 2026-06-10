@@ -307,6 +307,8 @@
         const found = findQuestionByDbId(btn.dataset.dbid);
         if (!found) return;
         found.question.revision = !found.question.revision;
+        // Instantly update the DOM class for immediate visual feedback
+        btn.classList.toggle('active', found.question.revision);
         fireAPI('PATCH', `/questions/${btn.dataset.dbid}/revision`, { revision: found.question.revision });
         refreshCurrentView();
       });
@@ -963,7 +965,7 @@ CRITICAL REQUIREMENTS:
       case 'welcome': renderWelcome(); break;
       case 'topic': navigateToTopic(state.activeTopic); break;
       case 'method':
-        if (state.questionsVisible) renderMethodQuestions();
+        renderMethodQuestions();
         renderNotes(`method:${state.activeTopic}:${state.activeMethod}`, 'method-notes-list', 'method-add-note-btn');
         break;
       case 'revision': renderRevisionList(); break;
@@ -1116,15 +1118,15 @@ CRITICAL REQUIREMENTS:
 
     document.addEventListener('mousemove', (e) => {
       if (!isDragging) return;
-      
+
       // Calculate new width: window width - mouse X
       // (because the panel is on the right)
       let newWidth = window.innerWidth - e.clientX;
-      
+
       // Constrain width (min 250px, max 600px or half window)
       const minWidth = 250;
       const maxWidth = Math.min(600, window.innerWidth / 2);
-      
+
       if (newWidth < minWidth) newWidth = minWidth;
       if (newWidth > maxWidth) newWidth = maxWidth;
 
@@ -1137,7 +1139,7 @@ CRITICAL REQUIREMENTS:
         resizer.classList.remove('dragging');
         document.body.style.cursor = '';
         document.body.style.userSelect = '';
-        
+
         // Save to localStorage
         const finalWidth = layout.style.getPropertyValue('--right-panel-width').replace('px', '');
         if (finalWidth) {
